@@ -1,154 +1,66 @@
-#include <iostream>
-#include <set>
-#include <map>
-#include <memory>
-#include <functional>
+#include "iostream"
+#include "string"
 
-#include "av.h"
-#include "ffmpeg.h"
-#include "codec.h"
-#include "packet.h"
-#include "videorescaler.h"
-#include "audioresampler.h"
-#include "avutils.h"
-
-// API2
-#include "format.h"
-#include "formatcontext.h"
-#include "codec.h"
-#include "codeccontext.h"
-
-// Opencv
-#include "opencv2/core.hpp"
+extern "C" {
+    #include "libavcodec/avcodec.h"
+    #include "libavformat/avformat.h"
+};
 
 using namespace std;
-using namespace av;
-using namespace cv;
 
-int main(int argc, char **argv) {
-    if (argc < 2)
-        return 1;
+// print out the steps and errors
+static void logging(const char *fmt, ...) {
+    va_list args;
+    fprintf(stderr, "[LOG]: ");
+    va_start(args, fmt);
+    vfprintf(stderr, fmt, args);
+    va_end(args);
+    fprintf(stderr, "\n");
+}
 
-    auto start = getTickCount();
+int main(int argc, const char *argv[]) {
+    logging("initializing all the containers, codecs and protocols.");
 
-    av::init();
-    av::setFFmpegLoggingLevel(AV_LOG_DEBUG);
-
-    string uri{argv[1]};
-
-    ssize_t videoStream = -1;
-    VideoDecoderContext vdec;
-    Stream vst;
-    error_code ec;
-
-    int count = 0;
-    {
-
-        FormatContext ictx;
-
-        ictx.openInput(uri, ec);
-        if (ec) {
-            cerr << "Can't open input\n";
-            return 1;
-        }
-
-        cerr << "Streams: " << ictx.streamsCount() << endl;
-
-        ictx.findStreamInfo(ec);
-        if (ec) {
-            cerr << "Can't find streams: " << ec << ", " << ec.message() << endl;
-            return 1;
-        }
-
-        for (size_t i = 0; i < ictx.streamsCount(); ++i) {
-            auto st = ictx.stream(i);
-            if (st.mediaType() == AVMEDIA_TYPE_VIDEO) {
-                videoStream = i;
-                vst = st;
-                break;
-            }
-        }
-
-        cerr << videoStream << endl;
-
-        if (vst.isNull()) {
-            cerr << "Video stream not found\n";
-            return 1;
-        }
-
-        if (vst.isValid()) {
-            vdec = VideoDecoderContext(vst);
-
-            Codec codec = findDecodingCodec(vdec.raw()->codec_id);
-
-            vdec.setCodec(codec);
-            vdec.setRefCountedFrames(true);
-
-            vdec.open({{"threads", "1"}}, Codec(), ec);
-            //vdec.open(ec);
-            if (ec) {
-                cerr << "Can't open codec\n";
-                return 1;
-            }
-        }
-
-
-        while (Packet pkt = ictx.readPacket(ec)) {
-            if (ec) {
-                clog << "Packet reading error: " << ec << ", " << ec.message() << endl;
-                return 1;
-            }
-
-            if (pkt.streamIndex() != videoStream) {
-                continue;
-            }
-
-            auto ts = pkt.ts();
-            clog << "Read packet: " << ts << " / " << ts.seconds() << " / " << pkt.timeBase() << " / st: "
-                 << pkt.streamIndex() << endl;
-
-            VideoFrame frame = vdec.decode(pkt, ec);
-
-            count++;
-            //if (count > 100)
-            //    break;
-
-            if (ec) {
-                cerr << "Error: " << ec << ", " << ec.message() << endl;
-                return 1;
-            } else if (!frame) {
-                cerr << "Empty frame\n";
-                //continue;
-            }
-
-            ts = frame.pts();
-
-            clog << "  Frame: " << frame.width() << "x" << frame.height() << ", size=" << frame.size() << ", ts=" << ts
-                 << ", tm: " << ts.seconds() << ", tb: " << frame.timeBase() << ", ref=" << frame.isReferenced() << ":"
-                 << frame.refCount() << endl;
-
-        }
-
-        auto end = getTickCount();
-        cout << "Elapsed: " << (end - start) / getTickFrequency() << endl;
-
-        clog << "Flush frames;\n";
-        while (true) {
-            VideoFrame frame = vdec.decode(Packet(), ec);
-            if (ec) {
-                cerr << "Error: " << ec << ", " << ec.message() << endl;
-                return 1;
-            }
-            if (!frame)
-                break;
-            auto ts = frame.pts();
-            clog << "  Frame: " << frame.width() << "x" << frame.height() << ", size=" << frame.size() << ", ts=" << ts
-                 << ", tm: " << ts.seconds() << ", tb: " << frame.timeBase() << ", ref=" << frame.isReferenced() << ":"
-                 << frame.refCount() << endl;
-        }
-
-        // NOTE: stream decodec must be closed/destroyed before
-        //ictx.close();
-        //vdec.close();
+    // AVFormatContext holds the header information from the format (Container)
+    // Allocating memory for this component
+    // http://ffmpeg.org/doxygen/trunk/structAVFormatContext.html
+    AVFormatContext *pFormatContext = avformat_alloc_context();
+    if (!pFormatContext) {
+        logging("ERROR could not allocate memory for Format Context");
+        return -1;
     }
+
+    logging("opening the input file (%s) and loading format (container) header", argv[1]);
+    // Open the file and read its header. The codecs are not opened.
+    // The function arguments are:
+    // AVFormatContext (the component we allocated memory for),
+    // url (filename),
+    // AVInputFormat (if you pass NULL it'll do the auto detect)
+    // and AVDictionary (which are options to the demuxer)
+    // http://ffmpeg.org/doxygen/trunk/group__lavf__decoding.html#ga31d601155e9035d5b0e7efedc894ee49
+    if (avformat_open_input(&pFormatContext, argv[1], nullptr, nullptr) != 0) {
+        logging("ERROR could not open the file");
+        return -1;
+    }
+
+    // now we have access to some information about our file
+    // since we read its header we can say what format (container) it's
+    // and some other information related to the format itself.
+    logging("format %s, duration %lld us, bit_rate %lld", pFormatContext->iformat->name, pFormatContext->duration, pFormatContext->bit_rate);
+
+    logging("finding stream info from format");
+    // read Packets from the Format to get stream information
+    // this function populates pFormatContext->streams
+    // (of size equals to pFormatContext->nb_streams)
+    // the arguments are:
+    // the AVFormatContext
+    // and options contains options for codec corresponding to i-th stream.
+    // On return each dictionary will be filled with options that were not found.
+    // https://ffmpeg.org/doxygen/trunk/group__lavf__decoding.html#gad42172e27cddafb81096939783b157bb
+    if (avformat_find_stream_info(pFormatContext,  nullptr) < 0) {
+        logging("ERROR could not get the stream info");
+        return -1;
+    }
+
+    return 0;
 }
