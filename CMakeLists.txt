@@ -22,7 +22,7 @@ find_package(FFmpeg
 #find_package(avcpp PATHS /home/local/BM/cpplibs NO_DEFAULT_PATH)
 find_package(OpenCV REQUIRED)
 
-add_executable(${PROJECT_NAME} main.cpp)
+add_executable(${PROJECT_NAME} demo.cpp)
 
 include_directories(${OpenCV_INCLUDE_DIRS})
 target_link_libraries(${PROJECT_NAME} PUBLIC
