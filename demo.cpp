@@ -6,9 +6,13 @@ extern "C" {
 }
 #include "iostream"
 
+#define IO_CTX_BUFFER_SIZE 4096 * 4;      // Tobe used later
+
 struct buffer_data {
-  uint8_t *ptr;
-  size_t size;    // Size left in the buffer
+  uint8_t *ptr;             // Store pointer to current byte
+  uint8_t *ori_ptr;         // Store pointer to the first byte
+  size_t size;              // Size left in the buffer
+  size_t file_size;         // Total size of video buffer
 };
 
 static int read_packet(void *opaque, uint8_t *buf, int buf_size) {
@@ -24,6 +28,43 @@ static int read_packet(void *opaque, uint8_t *buf, int buf_size) {
   bd->size -= buf_size;
 
   return buf_size;
+}
+
+static int64_t seek_in_buffer(void *opaque, int64_t offset, int whence) {
+  auto *bd = (buffer_data *) opaque;
+  printf("whence=%d , offset=%lld , file_size=%ld\n", whence, offset, bd->file_size);
+  switch (whence) {
+    case AVSEEK_SIZE:
+      return (int64_t) bd->file_size;
+      break;
+    case SEEK_SET:
+      if (bd->file_size > offset) {
+        bd->ptr = bd->ori_ptr + offset;
+        bd->size = bd->file_size - offset;
+      } else
+        return EOF;
+      break;
+    case SEEK_CUR:
+      if (bd->file_size > offset) {
+        bd->ptr += offset;
+        bd->size -= offset;
+      } else
+        return EOF;
+      break;
+    case SEEK_END:
+      if (bd->file_size > offset) {
+        bd->ptr = (bd->ori_ptr + bd->file_size) - offset;
+        size_t cur_pos = bd->ptr - bd->ori_ptr;
+        bd->size = bd->file_size - cur_pos;
+      } else
+        return EOF;
+      break;
+    default:
+      /* On error, do nothing, return current position of file. */
+      std::cerr << "Could not process buffer seek: " << whence << std::endl;
+      break;
+  }
+  return bd->ptr - bd->ori_ptr;
 }
 
 // print out the steps and errors
@@ -120,7 +161,7 @@ int main(int argc, char *argv[]) {
   size_t buffer_size = 4096;
   int avio_ctx_buffer_size = 4096;
   int ret;
-  struct buffer_data bd{};
+  buffer_data bd{};
   int video_idx = 1;
 
   AVCodecContext *codec_ctx;
@@ -143,8 +184,10 @@ int main(int argc, char *argv[]) {
   if (ret < 0)
     goto end;
 
-  bd.ptr  = buffer;
-  bd.size = buffer_size;
+  bd.ptr        = buffer;
+  bd.ori_ptr    = buffer;
+  bd.size       = buffer_size;
+  bd.file_size  = buffer_size;
 
   if (!(fmt_ctx = avformat_alloc_context())) {
     ret = AVERROR(ENOMEM);
@@ -157,7 +200,7 @@ int main(int argc, char *argv[]) {
     goto end;
   }
   avio_ctx = avio_alloc_context(avio_ctx_buffer, avio_ctx_buffer_size,
-                                0, &bd, &read_packet, nullptr, nullptr);
+                                0, &bd, &read_packet, nullptr, &seek_in_buffer);
   if (!avio_ctx) {
     ret = AVERROR(ENOMEM);
     goto end;
@@ -184,6 +227,12 @@ int main(int argc, char *argv[]) {
       video_idx = i;
       codec = avcodec_find_decoder(codec_params->codec_id);
       codec_ctx = avcodec_alloc_context3(codec);
+
+      if (avcodec_parameters_to_context(codec_ctx, codec_params) < 0) {
+        std::cerr << "Failed to copy codec params to codec context" << std::endl;
+        goto end;
+      }
+
       break;
     }
   }
