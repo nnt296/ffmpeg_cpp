@@ -5,6 +5,7 @@ extern "C" {
 #include "libavutil/file.h"
 }
 #include "iostream"
+#include "opencv2/opencv.hpp"
 
 #define IO_CTX_BUFFER_SIZE 4096 * 4;      // Tobe used later
 
@@ -32,24 +33,24 @@ static int read_packet(void *opaque, uint8_t *buf, int buf_size) {
 
 static int64_t seek_in_buffer(void *opaque, int64_t offset, int whence) {
   auto *bd = (buffer_data *) opaque;
-  printf("whence=%d , offset=%lld , file_size=%ld\n", whence, offset, bd->file_size);
+  // printf("whence=%d , offset=%lld , file_size=%ld\n", whence, offset, bd->file_size);
+
   switch (whence) {
     case AVSEEK_SIZE:
       return (int64_t) bd->file_size;
-      break;
     case SEEK_SET:
       if (bd->file_size > offset) {
         bd->ptr = bd->ori_ptr + offset;
         bd->size = bd->file_size - offset;
       } else
-        return EOF;
+        return AVERROR_EOF;
       break;
     case SEEK_CUR:
       if (bd->file_size > offset) {
         bd->ptr += offset;
         bd->size -= offset;
       } else
-        return EOF;
+        return AVERROR_EOF;
       break;
     case SEEK_END:
       if (bd->file_size > offset) {
@@ -57,7 +58,7 @@ static int64_t seek_in_buffer(void *opaque, int64_t offset, int whence) {
         size_t cur_pos = bd->ptr - bd->ori_ptr;
         bd->size = bd->file_size - cur_pos;
       } else
-        return EOF;
+        return AVERROR_EOF;
       break;
     default:
       /* On error, do nothing, return current position of file. */
@@ -138,7 +139,7 @@ static int decode_packet(AVPacket *pPacket, AVCodecContext *pCodecContext, AVFra
       );
 
       char frame_filename[1024];
-      snprintf(frame_filename, sizeof(frame_filename), "%s-%d.pgm", "frame", pCodecContext->frame_number);
+      snprintf(frame_filename, sizeof(frame_filename), "%s-%d.png", "frame", pCodecContext->frame_number);
       // Check if the frame is a planar YUV 4:2:0, 12bpp
       // That is the format of the provided .mp4 file
       // RGB formats will definitely not give a gray image
@@ -148,7 +149,9 @@ static int decode_packet(AVPacket *pPacket, AVCodecContext *pCodecContext, AVFra
             "Warning: the generated file may not be a grayscale image, but could e.g. be just the R component if the video format is RGB");
       }
       // save a grayscale frame into a .pgm file
-      save_gray_frame(pFrame->data[0], pFrame->linesize[0], pFrame->width, pFrame->height, frame_filename);
+      // save_gray_frame(pFrame->data[0], pFrame->linesize[0], pFrame->width, pFrame->height, frame_filename);
+      cv::Mat im(pFrame->height, pFrame->width, CV_8UC1, pFrame->data[0], pFrame->linesize[0]);
+      cv::imwrite(frame_filename, im);
     }
   }
   return 0;
