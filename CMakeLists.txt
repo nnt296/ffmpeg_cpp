@@ -1,5 +1,6 @@
 cmake_minimum_required (VERSION 3.11)
 
+#set(CMAKE_BUILD_TYPE Release)
 # transcoder sources
 project(AvCppSamples LANGUAGES CXX VERSION 2.0.99)
 
@@ -22,7 +23,7 @@ find_package(FFmpeg
 #find_package(avcpp PATHS /home/local/BM/cpplibs NO_DEFAULT_PATH)
 find_package(OpenCV REQUIRED)
 
-add_executable(${PROJECT_NAME} demo.cpp)
+add_executable(${PROJECT_NAME} filter.cpp)
 
 include_directories(${OpenCV_INCLUDE_DIRS})
 target_link_libraries(${PROJECT_NAME} PUBLIC
