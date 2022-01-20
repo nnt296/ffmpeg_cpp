@@ -423,6 +423,7 @@ int main(int argc, char **argv) {
   avfilter_graph_free(&filter_graph);
   avcodec_free_context(&dec_ctx);
   avformat_close_input(&fmt_ctx);
+  avio_context_free(&avio_ctx);
   av_frame_free(&frame);
   av_frame_free(&filt_frame);
   av_packet_free(&packet);
