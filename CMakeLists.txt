@@ -19,8 +19,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED yes)
 find_package(Threads)
 find_package(FFmpeg
         COMPONENTS AVCODEC AVFORMAT AVUTIL AVDEVICE AVFILTER SWSCALE SWRESAMPLE REQUIRED)
-
-#find_package(avcpp PATHS /home/local/BM/cpplibs NO_DEFAULT_PATH)
 find_package(OpenCV REQUIRED)
 
 add_executable(${PROJECT_NAME} read_video.cpp)
@@ -29,5 +27,5 @@ include_directories(${OpenCV_INCLUDE_DIRS})
 target_link_libraries(${PROJECT_NAME} PUBLIC
         Threads::Threads
         FFmpeg
-#        avcpp::avcpp
+        ${LIBMEMCACHED_LIBRARY}
         ${OpenCV_LIBS})
