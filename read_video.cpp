@@ -13,6 +13,7 @@ extern "C" {
 
 #include "opencv2/opencv.hpp"
 #include <thread>
+#include "curl/curl.h"
 
 #define AVIO_CONTEXT_BUFFER_SIZE 4096
 
@@ -26,6 +27,37 @@ struct BufferData {
   size_t size;
   size_t file_size;
 };
+
+static void free_bd(BufferData &buffer_data) {
+  // Free the original ptr and set the current ptr to NULL
+  free(buffer_data.ori_ptr);
+  buffer_data.ori_ptr = nullptr;
+  buffer_data.ptr = nullptr;
+  buffer_data.size = 0;
+  buffer_data.file_size = 0;
+}
+
+static size_t write_memory_callback(void *contents, size_t size, size_t num_mem_b, void *user_ptr) {
+  /* Example from https://curl.se/libcurl/c/getinmemory.html */
+
+  size_t real_size = size * num_mem_b;
+  auto *mem = (BufferData *) user_ptr;
+
+  auto *ptr = static_cast<uint8_t *>(realloc(mem->ori_ptr, mem->file_size + real_size + 1));
+
+  if (!ptr) {
+    // Out of memory
+    std::cerr << "Not enough memory (re-alloc returned NULL)" << std::endl;
+    return 0;
+  }
+
+  mem->ori_ptr = ptr;
+  memcpy(&(mem->ori_ptr)[mem->file_size], contents, real_size);
+  mem->file_size += real_size;
+  mem->ori_ptr[mem->file_size] = 0;
+
+  return real_size;
+}
 
 static int read_packet(void *opaque, uint8_t *buf, int buf_size) {
   auto *bd = (BufferData *) opaque;
@@ -110,9 +142,6 @@ public:
   int end_second = 0;
   AVPixelFormat dst_pix_fmt = AV_PIX_FMT_RGB24;
 
-  // Video buffer
-  BufferData bd{};
-
   explicit ReadVideoBuffer(float fps = 10,
                            int dst_w = 160, int dst_h = 160,
                            int start_second = 0, int end_second = 0) {
@@ -126,7 +155,7 @@ public:
   ~ReadVideoBuffer() = default;
 
   // This function return non-negative video_stream_index if success
-  int open_buffer() {
+  int open_buffer(BufferData &buffer_data) {
     AVCodec *codec;
     int ret;
 
@@ -143,7 +172,7 @@ public:
     }
 
     avio_ctx = avio_alloc_context(avio_ctx_buffer, AVIO_CONTEXT_BUFFER_SIZE,
-                                  0, &bd,
+                                  0, &buffer_data,
                                   &read_packet, nullptr, &seek_buffer);
     if (!avio_ctx) {
       std::cerr << "Cannot allocate memory for avio context" << std::endl;
@@ -299,7 +328,7 @@ public:
     return ret;
   }
 
-  std::vector<cv::Mat> decode_data_buffer() {
+  std::vector<cv::Mat> decode_data_buffer(BufferData &buffer_data) {
     int ret;
 
     char filter_descriptor[128];
@@ -322,7 +351,7 @@ public:
       goto end;
     }
 
-    if ((ret = open_buffer()) < 0)
+    if ((ret = open_buffer(buffer_data)) < 0)
       goto end;
 
     if ((ret = init_filter(filter_descriptor)) < 0)
@@ -415,7 +444,7 @@ public:
     sws_freeContext(sws_ctx);
   }
 
-  std::vector<cv::Mat> decode_from_file(const std::string &file_name) {
+  std::vector<cv::Mat> decode_from_file(const std::string &file_name, BufferData &buffer_data) {
     uint8_t *buffer;
     size_t buffer_size;
 
@@ -424,31 +453,72 @@ public:
       return {};
     }
 
-    bd.ptr = buffer;
-    bd.ori_ptr = buffer;
-    bd.size = buffer_size;
-    bd.file_size = buffer_size;
+    buffer_data.ptr = buffer;
+    buffer_data.ori_ptr = buffer;
+    buffer_data.size = buffer_size;
+    buffer_data.file_size = buffer_size;
 
-    auto v_rgb = decode_data_buffer();
+    auto v_rgb = decode_data_buffer(buffer_data);
 
     av_file_unmap(buffer, buffer_size);
+    free_bd(buffer_data);
+
     return v_rgb;
   }
 };
 
 int main(int argc, char **argv) {
+  CURL* curl_handle;
+  CURLcode res;
+  std::string memory;
+
+  BufferData bd{};
   ReadVideoBuffer reader(10, 160, 160, 0, 0);
 
-  for (int n = 0; n < 1; n++) {
-    auto begin = cv::getTickCount();
+  bd.ori_ptr = static_cast<uint8_t *>(malloc(1));
+  bd.file_size = 0;
 
-    std::string file_name{argv[1]};
-    auto v_rgb = reader.decode_from_file(file_name);
+  curl_global_init(CURL_GLOBAL_ALL);
 
-    std::cout << "Num decoded frames: " << v_rgb.size() << std::endl;
+  /* init the curl session */
+  curl_handle = curl_easy_init();
 
-    auto end = cv::getTickCount();
+  /* specify URL to get */
+  curl_easy_setopt(curl_handle, CURLOPT_URL, "https://vnno-zn-10-tf-baomoi-video.zadn.vn/179c78ef8ec345232393fb13af6d4f85/62619d21/streaming.baomoi.com/2018/10/01/119/27968791/5255385.mp4");
 
-    std::cout << "Elapsed: " << double(end - begin) / cv::getTickFrequency() << std::endl;
+  /* send all data to this function  */
+  curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, write_memory_callback);
+
+  /* we pass our 'chunk' struct to the callback function */
+  curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&bd);
+
+  /* some servers do not like requests that are made without a user-agent
+     field, so we provide one */
+  curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, "libcurl-agent/1.0");
+
+  /* get it! */
+  res = curl_easy_perform(curl_handle);
+
+  /* check for errors */
+  if(res != CURLE_OK) {
+    std::cerr << "curl_easy_perform() failed: " << curl_easy_strerror(res) << std::endl;
   }
+  else {
+    std::cout << "Retrieved " << bd.file_size << " bytes" << std::endl;
+  }
+
+  /* cleanup curl stuff */
+  curl_easy_cleanup(curl_handle);
+
+  bd.ptr = bd.ori_ptr;
+  bd.size = bd.file_size;
+  auto v_rgb = reader.decode_data_buffer(bd);
+  std::cout << "HERE: " << v_rgb.size() << std::endl;
+
+  free_bd(bd);
+
+  /* we are done with libcurl, so clean it up */
+  curl_global_cleanup();
+
+  return 0;
 }
