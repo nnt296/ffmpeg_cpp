@@ -45,19 +45,21 @@ include_directories(${PYTHON_INCLUDE_DIRS})
 include_directories(${OpenCV_INCLUDE_DIRS})
 include_directories(${OpenCV_INCLUDE_DIRS}/opencv4)
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../include)
 
 #**************************************************************************************************
 # Set variable **************************************************************************************************
 SET(SOURCES
         ${CMAKE_CURRENT_SOURCE_DIR}/ndarray_converter.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../src/curl_reader.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/../src/video_reader.cpp
         )
 
 #**************************************************************************************************
 # Make configuration
 #**************************************************************************************************
-pybind11_add_module(av_reader MODULE ${SOURCES} ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp)
-target_link_libraries(av_reader PRIVATE
+pybind11_add_module(av_reader_module MODULE ${SOURCES} ${CMAKE_CURRENT_SOURCE_DIR}/main.cpp)
+target_link_libraries(av_reader_module PRIVATE
         Threads::Threads
         FFmpeg
         -lcurl
