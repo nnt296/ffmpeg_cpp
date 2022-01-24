@@ -54,20 +54,27 @@ static int64_t seek_buffer(void *opaque, int64_t offset, int whence) {
   return bd->ptr - bd->ori_ptr;
 }
 
-ReadVideoBuffer::ReadVideoBuffer(float fps,
-                           int dst_w, int dst_h,
-                           int start_second, int end_second) {
-    this->fps = fps;
-    this->dst_w = dst_w;
-    this->dst_h = dst_h;
-    this->start_second = start_second;
-    this->end_second = end_second;
-  }
+InMemVideoReader::InMemVideoReader(double fps,
+                                   int dst_w, int dst_h,
+                                   int start_second, int end_second) {
+  this->fps = fps;
+  this->dst_w = dst_w;
+  this->dst_h = dst_h;
+  this->start_second = start_second;
+  this->end_second = end_second;
+}
 
-ReadVideoBuffer::~ReadVideoBuffer() = default;
+
+InMemVideoReader::InMemVideoReader(int max_size, int video_max_length, int max_num_frames) {
+  this->video_max_length = video_max_length;
+  this->max_num_frames = max_num_frames;
+  this->max_size = max_size;
+}
+
+InMemVideoReader::~InMemVideoReader() = default;
 
 // This function return non-negative video_stream_index if success
-int ReadVideoBuffer::open_buffer(BufferData &buffer_data) {
+int InMemVideoReader::open_buffer(BufferData &buffer_data) {
   AVCodec *codec;
   int ret;
 
@@ -94,7 +101,7 @@ int ReadVideoBuffer::open_buffer(BufferData &buffer_data) {
   fmt_ctx->pb = avio_ctx;
 
   if ((ret = avformat_open_input(&fmt_ctx, nullptr, nullptr, nullptr)) < 0) {
-    std::cerr << "Cannot opencv avformat" << std::endl;
+    std::cerr << "Cannot open avformat" << std::endl;
     return ret;
   }
 
@@ -137,7 +144,7 @@ int ReadVideoBuffer::open_buffer(BufferData &buffer_data) {
   return ret;
 }
 
-int ReadVideoBuffer::init_filter(const char *filter_descriptor) {
+int InMemVideoReader::init_filter(const char *filter_descriptor) {
   char args[512];
   int ret;
   const AVFilter *buffersrc = avfilter_get_by_name("buffer");
@@ -223,7 +230,7 @@ int ReadVideoBuffer::init_filter(const char *filter_descriptor) {
   return ret;
 }
 
-int ReadVideoBuffer::init_sws_context() {
+int InMemVideoReader::init_sws_context() {
   int ret;
   if ((ret = av_image_alloc(dst_data, dst_linesize, dst_w, dst_h, dst_pix_fmt, 1)) < 0) {
     return AVERROR(ENOMEM);
@@ -240,7 +247,7 @@ int ReadVideoBuffer::init_sws_context() {
   return ret;
 }
 
-std::vector<cv::Mat> ReadVideoBuffer::decode_data_buffer(BufferData &buffer_data) {
+std::vector<cv::Mat> InMemVideoReader::decode_data_buffer(BufferData &buffer_data) {
   int ret;
 
   char filter_descriptor[128];
@@ -265,6 +272,8 @@ std::vector<cv::Mat> ReadVideoBuffer::decode_data_buffer(BufferData &buffer_data
 
   if ((ret = open_buffer(buffer_data)) < 0)
     goto end;
+
+  init_output_params();
 
   if ((ret = init_filter(filter_descriptor)) < 0)
     goto end;
@@ -338,7 +347,7 @@ std::vector<cv::Mat> ReadVideoBuffer::decode_data_buffer(BufferData &buffer_data
   return v_rgb;
 }
 
-void ReadVideoBuffer::free_resources() {
+void InMemVideoReader::free_resources() {
   // Free ffmpeg context
   avfilter_graph_free(&filter_graph);
   avcodec_free_context(&codec_ctx);
@@ -356,25 +365,65 @@ void ReadVideoBuffer::free_resources() {
   sws_freeContext(sws_ctx);
 }
 
-std::vector<cv::Mat> ReadVideoBuffer::decode_from_file
-(const std::string &file_name, BufferData &buffer_data) {
-    uint8_t *buffer;
-    size_t buffer_size;
+std::vector<cv::Mat> InMemVideoReader::decode_from_file
+    (const std::string &file_name, BufferData &buffer_data) {
+  uint8_t *buffer;
+  size_t buffer_size;
 
-    if (av_file_map(file_name.c_str(), &buffer, &buffer_size, 0, nullptr) < 0) {
-      std::cerr << "file map error\n";
-      return {};
-    }
-
-    buffer_data.ptr = buffer;
-    buffer_data.ori_ptr = buffer;
-    buffer_data.size = buffer_size;
-    buffer_data.file_size = buffer_size;
-
-    auto v_rgb = decode_data_buffer(buffer_data);
-
-    av_file_unmap(buffer, buffer_size);
-    free_bd(buffer_data);
-
-    return v_rgb;
+  if (av_file_map(file_name.c_str(), &buffer, &buffer_size, 0, nullptr) < 0) {
+    std::cerr << "file map error\n";
+    return {};
   }
+
+  buffer_data.ptr = buffer;
+  buffer_data.ori_ptr = buffer;
+  buffer_data.size = buffer_size;
+  buffer_data.file_size = buffer_size;
+
+  auto v_rgb = decode_data_buffer(buffer_data);
+
+  av_file_unmap(buffer, buffer_size);
+  free_bd(buffer_data);
+
+  return v_rgb;
+}
+
+void InMemVideoReader::init_output_params() {
+  if (!fmt_ctx or !codec_ctx) {
+    std::cout << "[WARNING] Init context before setting output params" << std::endl;
+    return;
+  }
+
+
+  // Config output info
+  // video max length
+  double duration = double(fmt_ctx->duration) / 1e6;
+  if (duration > this->video_max_length and this->video_max_length > 0)
+    duration = this->video_max_length;
+  this->end_second = (int) duration;
+
+  // fps
+  auto raw_fps = av_q2d(this->fmt_ctx->streams[video_stream_index]->r_frame_rate);
+  if (double(duration) * raw_fps > this->max_num_frames and this->max_num_frames > 0)
+    this->fps = double(this->max_num_frames) / double(duration);
+  else
+    this->fps = raw_fps;
+
+  // Output size
+  int max_sz = std::max(this->codec_ctx->width, this->codec_ctx->height);
+  if (max_sz > this->max_size) {
+    auto ratio = double(this->max_size) / max_sz;
+    this->dst_w = int(std::floor(double(this->codec_ctx->width) * ratio / 16) * 16);
+    this->dst_h = int(std::floor(double(this->codec_ctx->height) * ratio / 16) * 16);
+  } else {
+    this->dst_w = this->codec_ctx->width;
+    this->dst_h = this->codec_ctx->height;
+  }
+
+  std::cout << "[INFO] Output parameters: " << std::endl;
+  std::cout << "\t\tFPS: " << this->fps << std::endl;
+  std::cout << "\t\tStart Seconds: " << this->start_second << std::endl;
+  std::cout << "\t\tEnd Seconds: " << this->end_second << std::endl;
+  std::cout << "\t\tWidth: " << this->dst_w << std::endl;
+  std::cout << "\t\tHeight: " << this->dst_h << std::endl;
+}

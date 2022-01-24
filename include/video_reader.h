@@ -21,7 +21,7 @@ extern "C" {
 #include "data_types.h"
 #include "curl_reader.h"
 
-class ReadVideoBuffer {
+class InMemVideoReader {
 public:
   // Setup global variable for convenience
 
@@ -47,21 +47,35 @@ public:
   AVFrame *filtered_frame{};
 
   // Target output
-  float fps = 10;
+  int max_size = 720;
+  int video_max_length = 300;
+  int max_num_frames = 4000;
+  double fps = 10;
   int dst_w = 160;
   int dst_h = 160;
   int start_second = 0;
   int end_second = 0;
   AVPixelFormat dst_pix_fmt = AV_PIX_FMT_RGB24;
 
-  explicit ReadVideoBuffer(float fps = 10,
-                           int dst_w = 160, int dst_h = 160,
-                           int start_second = 0, int end_second = 0);
+  explicit InMemVideoReader(double fps = 10,
+                            int dst_w = 160, int dst_h = 160,
+                            int start_second = 0, int end_second = 0);
 
-  ~ReadVideoBuffer();
+  explicit InMemVideoReader(int max_size = 720,
+                            int video_max_length = 300,
+                            int max_num_frames = 4000);
 
-  // This function return non-negative video_stream_index if success
+  ~InMemVideoReader();
+
+  /**
+   * This function init format, codec, avio context using buffer_data
+   *
+   * @param buffer_data: contains ptr to the first bytes and total size of the file
+   * @return >= 0 if success, < 0 otherwise
+   */
   int open_buffer(BufferData &buffer_data);
+
+  void init_output_params();
 
   int init_filter(const char *filter_descriptor);
 
