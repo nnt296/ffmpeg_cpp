@@ -21,7 +21,7 @@ find_package(FFmpeg
         COMPONENTS AVCODEC AVFORMAT AVUTIL AVDEVICE AVFILTER SWSCALE SWRESAMPLE REQUIRED)
 find_package(OpenCV REQUIRED)
 
-add_executable(${PROJECT_NAME} read_video.cpp)
+add_executable(${PROJECT_NAME} read_video.cpp data_types.h curl_reader.cpp curl_reader.h)
 
 include_directories(${OpenCV_INCLUDE_DIRS})
 target_link_libraries(${PROJECT_NAME} PUBLIC

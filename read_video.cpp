@@ -13,51 +13,14 @@ extern "C" {
 
 #include "opencv2/opencv.hpp"
 #include <thread>
+#include <unistd.h>
 #include "curl/curl.h"
-
-#define AVIO_CONTEXT_BUFFER_SIZE 4096
+#include "data_types.h"
+#include "curl_reader.h"
 
 // May return 0 when not able to detect
 // If detected 0, then ffmpeg will try to detect the appropriate number
 const auto processor_count = (int) std::thread::hardware_concurrency();
-
-struct BufferData {
-  uint8_t *ptr;
-  uint8_t *ori_ptr;
-  size_t size;
-  size_t file_size;
-};
-
-static void free_bd(BufferData &buffer_data) {
-  // Free the original ptr and set the current ptr to NULL
-  free(buffer_data.ori_ptr);
-  buffer_data.ori_ptr = nullptr;
-  buffer_data.ptr = nullptr;
-  buffer_data.size = 0;
-  buffer_data.file_size = 0;
-}
-
-static size_t write_memory_callback(void *contents, size_t size, size_t num_mem_b, void *user_ptr) {
-  /* Example from https://curl.se/libcurl/c/getinmemory.html */
-
-  size_t real_size = size * num_mem_b;
-  auto *mem = (BufferData *) user_ptr;
-
-  auto *ptr = static_cast<uint8_t *>(realloc(mem->ori_ptr, mem->file_size + real_size + 1));
-
-  if (!ptr) {
-    // Out of memory
-    std::cerr << "Not enough memory (re-alloc returned NULL)" << std::endl;
-    return 0;
-  }
-
-  mem->ori_ptr = ptr;
-  memcpy(&(mem->ori_ptr)[mem->file_size], contents, real_size);
-  mem->file_size += real_size;
-  mem->ori_ptr[mem->file_size] = 0;
-
-  return real_size;
-}
 
 static int read_packet(void *opaque, uint8_t *buf, int buf_size) {
   auto *bd = (BufferData *) opaque;
@@ -468,57 +431,18 @@ public:
 };
 
 int main(int argc, char **argv) {
-  CURL* curl_handle;
-  CURLcode res;
-  std::string memory;
-
-  BufferData bd{};
   ReadVideoBuffer reader(10, 160, 160, 0, 0);
+  std::string url = "https://vnno-zn-10-tf-baomoi-video.zadn.vn/179c78ef8ec345232393fb13af6d4f85/62619d21/streaming.baomoi.com/2018/10/01/119/27968791/5255385.mp4";
 
-  bd.ori_ptr = static_cast<uint8_t *>(malloc(1));
-  bd.file_size = 0;
+  for (int i = 0; i < 10; i++) {
+    BufferData bd{};
+    get_ftp_buffer_data(url, bd, 100);
+    auto v_rgb = reader.decode_data_buffer(bd);
+    std::cout << "HERE: " << v_rgb.size() << std::endl;
+    free_bd(bd);
 
-  curl_global_init(CURL_GLOBAL_ALL);
-
-  /* init the curl session */
-  curl_handle = curl_easy_init();
-
-  /* specify URL to get */
-  curl_easy_setopt(curl_handle, CURLOPT_URL, "https://vnno-zn-10-tf-baomoi-video.zadn.vn/179c78ef8ec345232393fb13af6d4f85/62619d21/streaming.baomoi.com/2018/10/01/119/27968791/5255385.mp4");
-
-  /* send all data to this function  */
-  curl_easy_setopt(curl_handle, CURLOPT_WRITEFUNCTION, write_memory_callback);
-
-  /* we pass our 'chunk' struct to the callback function */
-  curl_easy_setopt(curl_handle, CURLOPT_WRITEDATA, (void *)&bd);
-
-  /* some servers do not like requests that are made without a user-agent
-     field, so we provide one */
-  curl_easy_setopt(curl_handle, CURLOPT_USERAGENT, "libcurl-agent/1.0");
-
-  /* get it! */
-  res = curl_easy_perform(curl_handle);
-
-  /* check for errors */
-  if(res != CURLE_OK) {
-    std::cerr << "curl_easy_perform() failed: " << curl_easy_strerror(res) << std::endl;
+    sleep(2);
   }
-  else {
-    std::cout << "Retrieved " << bd.file_size << " bytes" << std::endl;
-  }
-
-  /* cleanup curl stuff */
-  curl_easy_cleanup(curl_handle);
-
-  bd.ptr = bd.ori_ptr;
-  bd.size = bd.file_size;
-  auto v_rgb = reader.decode_data_buffer(bd);
-  std::cout << "HERE: " << v_rgb.size() << std::endl;
-
-  free_bd(bd);
-
-  /* we are done with libcurl, so clean it up */
-  curl_global_cleanup();
 
   return 0;
 }
