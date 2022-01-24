@@ -1,19 +1,21 @@
 #ifndef AVCPPSAMPLES_DATA_TYPES_H
 #define AVCPPSAMPLES_DATA_TYPES_H
 
+#include "string"
+
 #define AVIO_CONTEXT_BUFFER_SIZE 4096
 
 struct FileInfo {
-  std::string filename;
-  double filesize;
-  long filetime;
+  std::string filename{};
+  double filesize{};
+  long filetime{};
 };
 
 struct BufferData {
-  uint8_t *ptr;
-  uint8_t *ori_ptr;
-  size_t size;
-  size_t file_size;
+  uint8_t *ptr{};
+  uint8_t *ori_ptr{};
+  size_t size{};
+  size_t file_size{};
 };
 
 static void free_bd(BufferData &buffer_data) {
