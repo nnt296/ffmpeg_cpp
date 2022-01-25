@@ -249,14 +249,7 @@ int InMemVideoReader::init_sws_context() {
 
 std::vector<cv::Mat> InMemVideoReader::decode_data_buffer(BufferData &buffer_data) {
   int ret;
-
-  char filter_descriptor[128];
-  if (end_second > 0)
-    snprintf(filter_descriptor, sizeof(filter_descriptor),
-             "trim=end=%d:start=%d,fps=%.1f",
-             end_second, start_second, fps);
-  else
-    snprintf(filter_descriptor, sizeof(filter_descriptor), "fps=%.1f", fps);
+  char filter_descriptor[128];      // FFmpeg filter string
 
   std::vector<cv::Mat> v_rgb{};
   int num_frame = 0;
@@ -274,6 +267,14 @@ std::vector<cv::Mat> InMemVideoReader::decode_data_buffer(BufferData &buffer_dat
     goto end;
 
   init_output_params();
+
+  // Setup output params
+  if (end_second > 0)
+    snprintf(filter_descriptor, sizeof(filter_descriptor),
+             "trim=end=%d:start=%d,fps=%.1f",
+             end_second, start_second, fps);
+  else
+    snprintf(filter_descriptor, sizeof(filter_descriptor), "fps=%.1f", fps);
 
   if ((ret = init_filter(filter_descriptor)) < 0)
     goto end;
