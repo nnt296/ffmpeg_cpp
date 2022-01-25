@@ -12,6 +12,7 @@
   sudo apt-get install libcurl4-openssl-dev
   ```
 - Build and install Opencv
+- Tested with ubuntu-20.04, gcc 9.3.0, ffmpeg 4.2.4
 
 
 ## Run 

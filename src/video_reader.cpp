@@ -75,7 +75,7 @@ InMemVideoReader::~InMemVideoReader() = default;
 
 // This function return non-negative video_stream_index if success
 int InMemVideoReader::open_buffer(BufferData &buffer_data) {
-  AVCodec *codec;
+  const AVCodec *codec;
   int ret;
 
   fmt_ctx = avformat_alloc_context();
