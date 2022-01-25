@@ -41,6 +41,20 @@ std::vector<cv::Mat> read_url(const std::string &url,
   return v_rgb;
 }
 
+/* Decode RGB frames from file*/
+std::vector<cv::Mat> read_file(const std::string &file_path,
+                               int max_size = 720,
+                               int video_max_length = 300,
+                               int max_num_frames = 4000) {
+  BufferData bd{};
+  InMemVideoReader vid_reader(max_size, video_max_length, max_num_frames);
+
+  auto v_rgb = vid_reader.decode_from_file(file_path, bd);
+  free_bd(bd);
+
+  return v_rgb;
+}
+
 PYBIND11_MODULE(av_reader_module, m) {
   NDArrayConverter::init_numpy();
 
@@ -52,4 +66,10 @@ PYBIND11_MODULE(av_reader_module, m) {
         "video_max_length"_a = 300,
         "max_num_frames"_a = 4000,
         "timeout_seconds"_a = 0);
+
+  m.def("read_file", &read_file, "Get list of frame from filesystem",
+        "file_path"_a = "",
+        "max_size"_a = 720,
+        "video_max_length"_a = 300,
+        "max_num_frames"_a = 4000);
 }
